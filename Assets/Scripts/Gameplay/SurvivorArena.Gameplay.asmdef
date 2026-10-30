@@ -1,0 +1,17 @@
+{
+    "name": "SurvivorArena.Gameplay",
+    "rootNamespace": "SurvivorArena.Gameplay",
+    "references": [
+        "SurvivorArena.Core",
+        "SurvivorArena.Data"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,16 @@
+{
+    "name": "SurvivorArena.Platform",
+    "rootNamespace": "SurvivorArena.Platform",
+    "references": [
+        "SurvivorArena.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

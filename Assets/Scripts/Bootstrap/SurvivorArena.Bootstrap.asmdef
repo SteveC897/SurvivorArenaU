@@ -1,0 +1,20 @@
+{
+    "name": "SurvivorArena.Bootstrap",
+    "rootNamespace": "SurvivorArena.Bootstrap",
+    "references": [
+        "SurvivorArena.Core",
+        "SurvivorArena.Data",
+        "SurvivorArena.Gameplay",
+        "SurvivorArena.Platform",
+        "SurvivorArena.Presentation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
