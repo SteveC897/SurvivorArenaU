@@ -1,4 +1,5 @@
 using SurvivorArena.Core;
+using SurvivorArena.Core.Stats;
 using UnityEngine;
 
 namespace SurvivorArena.Gameplay
@@ -7,12 +8,14 @@ namespace SurvivorArena.Gameplay
     /// 主角移动（Gameplay 层）。
     /// 不直接读 Input：只依赖 Core.IPlayerInput，由 Platform 层实现、组合根注入；
     /// 也不直接做动画：只暴露 IsMoving / MoveDirection 给 Presentation 的 PlayerSpriteView。
+    /// 移动速度来自 Core.Stats.Stat：所有加成必须通过 Stat.AddModifier 注册，
+    /// 这里只读 Value，不缓存、不自己算倍率。
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class PlayerMotor : MonoBehaviour
     {
         private IPlayerInput _input;
-        private float _moveSpeed = 4.2f;
+        private Stat _moveSpeed;
         private bool _controlEnabled = true;
 
         public bool ControlEnabled => _controlEnabled;
@@ -21,11 +24,21 @@ namespace SurvivorArena.Gameplay
 
         public Vector2 MoveDirection { get; private set; }
 
-        /// <summary>由组合根在 Start 里注入。</summary>
-        public void Initialize(IPlayerInput input, float moveSpeed)
+        /// <summary>由组合根在 Start 里注入输入与 MoveSpeed 属性。</summary>
+        public void Initialize(IPlayerInput input, Stat moveSpeed)
         {
             _input = input;
-            _moveSpeed = Mathf.Max(0f, moveSpeed);
+            _moveSpeed = moveSpeed;
+
+            if (_input == null)
+            {
+                Debug.LogError($"{nameof(PlayerMotor)} 缺少 {nameof(IPlayerInput)}。", this);
+            }
+
+            if (_moveSpeed == null)
+            {
+                Debug.LogError($"{nameof(PlayerMotor)} 缺少 MoveSpeed Stat。", this);
+            }
         }
 
         public void SetControlEnabled(bool controlEnabled)
@@ -41,7 +54,15 @@ namespace SurvivorArena.Gameplay
         /// <summary>由组合根每帧调用，保证与 GameClock 同一节拍。</summary>
         public void Tick(float deltaTime)
         {
-            if (_input == null || !_controlEnabled || _moveSpeed <= 0f || deltaTime <= 0f)
+            if (_input == null || _moveSpeed == null || !_controlEnabled || deltaTime <= 0f)
+            {
+                IsMoving = false;
+                MoveDirection = Vector2.zero;
+                return;
+            }
+
+            float speed = _moveSpeed.Value;
+            if (speed <= 0f)
             {
                 IsMoving = false;
                 MoveDirection = Vector2.zero;
@@ -59,7 +80,7 @@ namespace SurvivorArena.Gameplay
 
             if (IsMoving)
             {
-                transform.position += (Vector3)(move * (_moveSpeed * deltaTime));
+                transform.position += (Vector3)(move * (speed * deltaTime));
             }
         }
     }

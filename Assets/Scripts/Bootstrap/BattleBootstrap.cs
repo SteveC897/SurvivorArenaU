@@ -35,9 +35,16 @@ namespace SurvivorArena.Bootstrap
 
         private GameClock _clock;
         private IPlayerInput _input;
+        private PlayerStats _playerStats;
         private KillAuraSystem _killAura;
         private OffscreenRecycler _recycler;
         private BattleSession _session;
+
+        /// <summary>
+        /// 后续新增的武器/被动/秘法牌系统由组合根拿到这个对象去注册修改器：
+        /// 只能拿 Stat 引用 AddModifier，不能直接改 Value。
+        /// </summary>
+        public PlayerStats Stats => _playerStats;
 
         private void Start()
         {
@@ -78,14 +85,18 @@ namespace SurvivorArena.Bootstrap
             _input = new LegacyPlayerInput(KeyCode.R);
 
             // Gameplay
-            playerMotor.Initialize(_input, config.PlayerMoveSpeed);
+            // 先建属性表：后续所有系统只从这里拿 Stat 引用，通过修改器改变数值。
+            _playerStats = new PlayerStats(config);
+            playerMotor.Initialize(_input, _playerStats.MoveSpeed);
             spawner.Initialize(playerMotor.transform, config);
-            auraView.Initialize(config.AuraRadius);
+            auraView.Initialize(_playerStats.AuraRadius);
 
             var viewport = new CameraViewport(mainCamera);
             _recycler = new OffscreenRecycler(spawner, playerMotor.transform, config, viewport);
-            _killAura = new KillAuraSystem(spawner, playerMotor.transform, config.AuraRadius);
+            _killAura = new KillAuraSystem(spawner, playerMotor.transform, _playerStats.AuraRadius);
 
+            // 后续新增系统（武器/被动/秘法牌/强化）在这里 new，并把 _playerStats
+            // 或具体的 Stat 注入给它们；不要在其它地方直接改 Stat.Value。
             var scheduler = new WaveScheduler(waveTable);
             _session = new BattleSession(_clock, scheduler, spawner, playerMotor, config, logWaveStarts);
             _session.Start();

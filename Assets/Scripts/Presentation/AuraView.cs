@@ -1,3 +1,4 @@
+using SurvivorArena.Core.Stats;
 using SurvivorArena.Gameplay;
 using UnityEngine;
 
@@ -8,8 +9,8 @@ namespace SurvivorArena.Presentation
     /// 在主角脚下生成一张运行时径向渐变贴图，做“淡填充 + 亮边 + 呼吸”的效果；
     /// 真正的击杀判定在 Gameplay.KillAuraSystem，这里不碰敌人。
     ///
-    /// 贴图完全由代码生成，不新增美术资源；半径由组合根从 BattleConfig 注入，
-    /// 保证视觉圆和判定半径来自同一个数值。
+    /// 贴图完全由代码生成，不新增美术资源；半径来自组合根注入的 AuraRadius Stat，
+    /// 每帧读取 Value，所以属性修改器改变半径时视觉圆会同步缩放。
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class AuraView : MonoBehaviour
@@ -23,12 +24,13 @@ namespace SurvivorArena.Presentation
         [SerializeField, Min(0f)] private float pulseSpeed = 2.4f;
         [SerializeField, Range(0f, 0.5f)] private float pulseAmount = 0.12f;
 
-        [Header("初始半径（运行时会被 BattleConfig 覆盖）")]
+        [Header("初始半径（运行时会被 AuraRadius Stat 覆盖）")]
         [SerializeField, Min(0.1f)] private float radius = 2f;
 
         private SpriteRenderer _auraRenderer;
         private Sprite _auraSprite;
         private Texture2D _auraTexture;
+        private Stat _radiusStat;
         private float _radius = 2f;
 
         private void Awake()
@@ -41,9 +43,14 @@ namespace SurvivorArena.Presentation
         }
 
         /// <summary>由组合根在 Start 注入实际判定半径。</summary>
-        public void Initialize(float auraRadius)
+        public void Initialize(Stat auraRadius)
         {
-            _radius = Mathf.Max(0.1f, auraRadius);
+            _radiusStat = auraRadius;
+            if (_radiusStat != null)
+            {
+                _radius = Mathf.Max(0.1f, _radiusStat.Value);
+            }
+
             if (_auraRenderer == null)
             {
                 BuildVisual();
@@ -59,6 +66,16 @@ namespace SurvivorArena.Presentation
             if (_auraRenderer == null)
             {
                 return;
+            }
+
+            if (_radiusStat != null)
+            {
+                float currentRadius = _radiusStat.Value;
+                if (!Mathf.Approximately(currentRadius, _radius))
+                {
+                    _radius = Mathf.Max(0.1f, currentRadius);
+                    ApplyRadius();
+                }
             }
 
             float pulse = 1f + Mathf.Sin(Time.time * pulseSpeed) * pulseAmount;
