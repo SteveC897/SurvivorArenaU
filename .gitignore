@@ -1,10 +1,12 @@
 /Library/
 /Logs/
-/Packages/
-/ProjectSettings/
 /Temp/
 /UserSettings/
+
+# === edit by hand below ===
+
 /JobHunt/
 /Docs/Generated/
 /Docs/images/
+/Docs/screenshots/
 /Assets/Art/
