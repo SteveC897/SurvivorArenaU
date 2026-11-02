@@ -1,13 +1,14 @@
 using System;
+using SurvivorArena.Core;
 using UnityEngine;
 
 namespace SurvivorArena.Gameplay
 {
     /// <summary>
-    /// 测试场景唯一的敌人：蝙蝠（Gameplay 层）。
-    /// 行为只有直线追向主角，进入光环后由 KillAuraSystem 判定死亡。
-    /// 实例由 EnemySpawner 通过 Core.ObjectPool 池化复用；
+    /// 蝙蝠敌人（Gameplay 层）。
+    /// 直线追向主角；现在有生命值，由武器造成的伤害扣血，血量归零才死亡。
     /// 死亡时播放一小段胀大淡出后通过 Released 事件回到池中。
+    /// 金色大蝙蝠作为宝箱携带者：血量更高、体型更大，死亡时由 EnemySpawner 发 IsBoss 事件。
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class EnemyBat : MonoBehaviour
@@ -24,6 +25,7 @@ namespace SurvivorArena.Gameplay
         [SerializeField, Min(0f)] private float bobAmplitude = 0.04f;
         [SerializeField, Min(0f)] private float bobSpeed = 9f;
         [SerializeField, Min(0.01f)] private float deathDuration = 0.18f;
+        [SerializeField, Min(0.01f)] private float hitFlashDuration = 0.08f;
 
         private Transform _visual;
         private SpriteRenderer _renderer;
@@ -32,6 +34,13 @@ namespace SurvivorArena.Gameplay
         private float _speed;
         private float _bobPhase;
         private float _deathTime;
+        private float _maxHealth;
+        private float _health;
+        private int _xpValue;
+        private bool _isBoss;
+        private float _visualScale = 1f;
+        private float _hitFlash;
+        private Color _baseColor = Color.white;
 
         /// <summary>被击杀时触发；Spawner 在这里移除活跃列表、计数并发布事件。</summary>
         public event Action<EnemyBat> Killed;
@@ -44,6 +53,14 @@ namespace SurvivorArena.Gameplay
         public Vector2 Position => transform.position;
 
         public float Radius => radius;
+
+        public float Health => _health;
+
+        public float MaxHealth => _maxHealth;
+
+        public int XpValue => _xpValue;
+
+        public bool IsBoss => _isBoss;
 
         private void Awake()
         {
@@ -65,7 +82,11 @@ namespace SurvivorArena.Gameplay
             Sprite sprite,
             float speed,
             Transform target,
-            float enemyRadius)
+            float enemyRadius,
+            float maxHealth,
+            int xpValue,
+            bool isBoss,
+            float visualScale)
         {
             if (_renderer == null)
             {
@@ -76,20 +97,45 @@ namespace SurvivorArena.Gameplay
             _target = target;
             _speed = speed;
             radius = Mathf.Max(0.01f, enemyRadius);
+            _maxHealth = Mathf.Max(1f, maxHealth);
+            _health = _maxHealth;
+            _xpValue = Mathf.Max(0, xpValue);
+            _isBoss = isBoss;
+            _visualScale = Mathf.Max(0.1f, visualScale);
+            _baseColor = isBoss ? new Color(1f, 0.82f, 0.35f, 1f) : Color.white;
             _state = State.Alive;
             _deathTime = 0f;
+            _hitFlash = 0f;
 
             if (sprite != null)
             {
                 _renderer.sprite = sprite;
             }
 
-            _renderer.color = Color.white;
+            _renderer.color = _baseColor;
             _renderer.flipX = false;
             _renderer.sortingOrder = YSort.OrderForY(position.y);
             _visual.localPosition = Vector3.zero;
             _visual.localRotation = Quaternion.identity;
-            _visual.localScale = Vector3.one;
+            _visual.localScale = Vector3.one * _visualScale;
+        }
+
+        /// <summary>武器伤害入口。血量归零后走 Kill 的死亡事件。</summary>
+        public void ApplyDamage(float damage)
+        {
+            if (_state != State.Alive || damage <= 0f)
+            {
+                return;
+            }
+
+            _health -= damage;
+            _hitFlash = hitFlashDuration;
+
+            if (_health <= 0f)
+            {
+                _health = 0f;
+                Kill();
+            }
         }
 
         /// <summary>立即判定死亡。重复调用安全。</summary>
@@ -107,11 +153,11 @@ namespace SurvivorArena.Gameplay
 
         /// <summary>
         /// 离屏回收：只移动位置，不改变存活状态，不触发击杀/死亡表现。
-        /// 由 OffscreenRecycler 对跑出屏幕太远的活蝙蝠调用。
+        /// 由 OffscreenRecycler 对跑出屏幕太远的活蝙蝠调用；Boss 不参与回收。
         /// </summary>
         public void Relocate(Vector2 position)
         {
-            if (_state != State.Alive)
+            if (_state != State.Alive || _isBoss)
             {
                 return;
             }
@@ -131,6 +177,11 @@ namespace SurvivorArena.Gameplay
 
         private void Update()
         {
+            if (GamePause.IsPaused)
+            {
+                return;
+            }
+
             switch (_state)
             {
                 case State.Alive:
@@ -169,6 +220,17 @@ namespace SurvivorArena.Gameplay
                 _visual.localPosition = new Vector3(0f, bob, 0f);
             }
 
+            if (_hitFlash > 0f)
+            {
+                _hitFlash -= deltaTime;
+                float t = Mathf.Clamp01(_hitFlash / hitFlashDuration);
+                _renderer.color = Color.Lerp(_baseColor, Color.white, t);
+            }
+            else
+            {
+                _renderer.color = _baseColor;
+            }
+
             _renderer.sortingOrder = YSort.OrderForY(position.y);
         }
 
@@ -178,10 +240,10 @@ namespace SurvivorArena.Gameplay
             float progress = Mathf.Clamp01(_deathTime / deathDuration);
 
             _visual.localPosition = Vector3.zero;
-            _visual.localScale = Vector3.one * (1f + 0.8f * progress);
+            _visual.localScale = Vector3.one * (_visualScale * (1f + 0.8f * progress));
             _visual.localRotation = Quaternion.Euler(0f, 0f, 35f * progress);
 
-            Color color = Color.white;
+            Color color = _baseColor;
             color.a = 1f - progress;
             _renderer.color = color;
 
@@ -198,6 +260,7 @@ namespace SurvivorArena.Gameplay
             bobAmplitude = Mathf.Max(0f, bobAmplitude);
             bobSpeed = Mathf.Max(0f, bobSpeed);
             deathDuration = Mathf.Max(0.01f, deathDuration);
+            hitFlashDuration = Mathf.Max(0.01f, hitFlashDuration);
         }
     }
 }

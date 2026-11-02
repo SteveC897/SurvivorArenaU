@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using SurvivorArena.Bootstrap;
 using SurvivorArena.Data;
 using SurvivorArena.Gameplay;
@@ -8,6 +9,7 @@ using SurvivorArena.Presentation;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 using UnityEngine.U2D;
@@ -32,6 +34,7 @@ namespace SurvivorArena.EditorTools
         private const string BatPrefabPath = "Assets/Prefabs/EnemyBat.prefab";
         private const string MaterialPath = "Assets/Materials/SpriteUnlit.mat";
         private const string ConfigPath = "Assets/Data/BattleConfig.asset";
+        private const string ContentCatalogPath = "Assets/Data/ContentCatalog.asset";
         private const string CsvPath = "Assets/DataDocs/level01_enemy_spawn.csv";
         private const string ArtRoot = "Assets/Art/Generated/";
         private const string UnlitShaderPath =
@@ -100,6 +103,11 @@ namespace SurvivorArena.EditorTools
 
             // Data 层：把所有可调数值写进一个配置资产。
             BattleConfig config = BuildConfig(waveCsv);
+            ContentCatalog contentCatalog = BuildContentCatalog();
+            SetRef(config, "contentCatalog", contentCatalog);
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+
             WaveTable waveTable = WaveTable.Parse(waveCsv.text);
             waveTable.ValidateForRun(config.RunDurationSeconds);
             Debug.Log($"[场景构建] 波次表校验通过：{waveTable.Summary}");
@@ -130,8 +138,6 @@ namespace SurvivorArena.EditorTools
             SetRef(playerSpriteView, "motor", playerMotor);
             SetArray(playerSpriteView, "idleFrames", idle0, idle1);
             SetArray(playerSpriteView, "walkFrames", walk0, walk1);
-
-            var auraView = playerObject.AddComponent<AuraView>();
 
             // Gameplay：敌人池
             var spawnerObject = new GameObject("EnemySpawner");
@@ -170,6 +176,15 @@ namespace SurvivorArena.EditorTools
 
             // Presentation：HUD（只订阅 EventBus，不挂玩法引用）
             BattleHud hud = BuildHud(panelSprite);
+            var levelUpView = hud.gameObject.AddComponent<LevelUpView>();
+            SetRef(levelUpView, "panelSprite", panelSprite);
+
+            // UI 点击需要 EventSystem（旧 Input Manager 的 StandaloneInputModule）。
+            var eventSystemObject = new GameObject(
+                "EventSystem",
+                typeof(EventSystem),
+                typeof(StandaloneInputModule));
+            eventSystemObject.transform.SetParent(null);
 
             // Bootstrap：唯一同时认识所有层的组合根
             var bootstrapObject = new GameObject("BattleBootstrap");
@@ -178,7 +193,6 @@ namespace SurvivorArena.EditorTools
             SetRef(bootstrap, "mainCamera", camera);
             SetRef(bootstrap, "playerMotor", playerMotor);
             SetRef(bootstrap, "spawner", spawner);
-            SetRef(bootstrap, "auraView", auraView);
             SetBool(bootstrap, "logWaveStarts", true);
 
             EditorSceneManager.MarkSceneDirty(scene);
@@ -208,9 +222,8 @@ namespace SurvivorArena.EditorTools
             SetRef(config, "waveTableCsv", waveCsv);
             SetFloat(config, "runDurationSeconds", RunDuration);
             SetFloat(config, "playerMoveSpeed", 4.2f);
-            SetFloat(config, "auraRadius", 2f);
-            SetFloat(config, "enemySpawnRadiusMin", 12f);
-            SetFloat(config, "enemySpawnRadiusMax", 14f);
+            SetFloat(config, "enemySpawnRadiusMin", 8f);
+            SetFloat(config, "enemySpawnRadiusMax", 10f);
             SetFloat(config, "enemySpeedMin", 2.4f);
             SetFloat(config, "enemySpeedMax", 2.9f);
             SetFloat(config, "enemyRadius", 0.4f);
@@ -218,10 +231,330 @@ namespace SurvivorArena.EditorTools
             SetInt(config, "enemyMaxSpawnsPerFrame", 8);
             SetFloat(config, "recycleDistance", 16f);
             SetFloat(config, "recycleMargin", 1f);
+            SetInt(config, "randomSeed", 20261031);
+            SetInt(config, "xpGemMaxCount", 256);
+            SetFloat(config, "xpGemMagnetRadius", 2f);
+            SetFloat(config, "xpGemPickupRadius", 0.6f);
+            SetFloat(config, "xpGemMagnetSpeed", 12f);
+            SetInt(config, "maxWeaponSlots", 6);
+            SetInt(config, "maxPassiveSlots", 6);
+            SetFloat(config, "baseProjectileSpeed", 8f);
+            SetFloat(config, "projectileLifetime", 2.5f);
+            SetFloat(config, "garlicBaseRadius", 2f);
+            SetFloat(config, "enemyHealth", 5f);
+            SetInt(config, "enemyXp", 1);
+            SetFloatArray(config, "bossSpawnTimes", 60f, 150f, 270f);
+            SetIntArray(config, "bossChestRewards", 1, 3, 5);
+            SetFloat(config, "bossSpawnRadius", 7f);
+            SetFloat(config, "bossHealthBase", 120f);
+            SetFloat(config, "bossHealthPerSpawn", 120f);
+            SetFloat(config, "bossSpeed", 1.2f);
+            SetFloat(config, "bossRadius", 0.8f);
+            SetFloat(config, "bossVisualScale", 1.8f);
+            SetInt(config, "bossXp", 30);
+            SetFloat(config, "chestPickupRadius", 1.2f);
 
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
             return config;
+        }
+
+        /// <summary>
+        /// 生成 10 武器 + 10 被动的内容目录。数值来自
+        /// Docs/吸血鬼幸存者-本体武器与被动系统详解.md 第八节「首批实现清单」。
+        /// 防御三件（护盔/空虚之心/愈伤番茄）保留定义但 Offered=false：
+        /// 当前战斗范围没有玩家受伤/生命流程，先不把它们放进三选一。
+        /// </summary>
+        private static ContentCatalog BuildContentCatalog()
+        {
+            Sprite bolt = LoadSprite(ArtRoot + "proj_bolt_blue.png");
+            Sprite weapon01 = LoadIcon("weapon_01");
+            Sprite weapon03 = LoadIcon("weapon_03");
+            Sprite weapon05 = LoadIcon("weapon_05");
+            Sprite weapon07 = LoadIcon("weapon_07");
+            Sprite weapon11 = LoadIcon("weapon_11");
+            Sprite weapon13 = LoadIcon("weapon_13");
+            Sprite weapon15 = LoadIcon("weapon_15");
+            Sprite weapon17 = LoadIcon("weapon_17");
+            Sprite weapon19 = LoadIcon("weapon_19");
+            Sprite weapon21 = LoadIcon("weapon_21");
+
+            WeaponDefinition whip = W(
+                "whip", "神鞭", "向面朝方向横挥，命中前方/背后范围内全部敌人。",
+                weapon01, weapon01, WeaponBehavior.Whip,
+                L(10f, 1.35f, 1f, 1f, 0.12f, 1, 1, 0.2f, 2f),
+                L(10f, 1.35f, 1f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(15f, 1.35f, 1f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(20f, 1.35f, 1.1f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(25f, 1.35f, 1.1f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(30f, 1.35f, 1.2f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(35f, 1.35f, 1.2f, 1f, 0.12f, 2, 1, 0.2f, 2f),
+                L(40f, 1.35f, 1.2f, 1f, 0.12f, 2, 1, 0.2f, 2f));
+
+            WeaponDefinition magicWand = W(
+                "magic_wand", "强能魔杖", "自动锁定最近敌人，发射直线魔法弹；升级增加弹数与穿透。",
+                weapon03, bolt, WeaponBehavior.MagicWand,
+                L(10f, 1.2f, 1f, 1f, 0f, 1, 1),
+                L(10f, 1.2f, 1f, 1f, 0f, 2, 1),
+                L(10f, 1.0f, 1f, 1f, 0f, 2, 1),
+                L(10f, 1.0f, 1f, 1f, 0f, 3, 1),
+                L(20f, 1.0f, 1f, 1f, 0f, 3, 1),
+                L(20f, 1.0f, 1f, 1f, 0f, 4, 1),
+                L(20f, 1.0f, 1f, 1f, 0f, 4, 2),
+                L(30f, 1.0f, 1f, 1f, 0f, 4, 2));
+
+            WeaponDefinition knife = W(
+                "knife", "飞刀", "朝面朝方向连发飞刀，穿透多个敌人；升级增加弹数与穿透。",
+                weapon05, weapon05, WeaponBehavior.Knife,
+                L(6.5f, 1f, 1f, 1f, 0f, 1, 1, 0.3f, 3f),
+                L(6.5f, 1f, 1f, 1f, 0f, 2, 1, 0.3f, 3f),
+                L(11.5f, 1f, 1f, 1f, 0f, 3, 1, 0.3f, 3f),
+                L(11.5f, 1f, 1f, 1f, 0f, 4, 1, 0.3f, 3f),
+                L(11.5f, 1f, 1f, 1f, 0f, 4, 2, 0.3f, 3f),
+                L(11.5f, 1f, 1f, 1f, 0f, 5, 2, 0.3f, 3f),
+                L(16.5f, 1f, 1f, 1f, 0f, 6, 2, 0.3f, 3f),
+                L(16.5f, 1f, 1f, 1f, 0f, 6, 3, 0.3f, 3f));
+
+            WeaponDefinition axe = W(
+                "axe", "斧头", "向斜上方抛出并落下，穿透多个敌人。",
+                weapon07, weapon07, WeaponBehavior.Axe,
+                L(20f, 4f, 1f, 1f, 1.5f, 1, 3, 0.3f, 2f),
+                L(20f, 4f, 1f, 1f, 1.5f, 2, 3, 0.3f, 2f),
+                L(40f, 4f, 1f, 1f, 1.5f, 2, 3, 0.3f, 2f),
+                L(40f, 4f, 1f, 1f, 1.5f, 2, 5, 0.3f, 2f),
+                L(40f, 4f, 1f, 1f, 1.5f, 3, 5, 0.3f, 2f),
+                L(60f, 4f, 1f, 1f, 1.5f, 3, 5, 0.3f, 2f),
+                L(60f, 4f, 1f, 1f, 1.5f, 3, 7, 0.3f, 2f),
+                L(80f, 4f, 1f, 1f, 1.5f, 3, 7, 0.3f, 2f));
+
+            WeaponDefinition bible = W(
+                "king_bible", "国王圣经", "召唤环绕自身的圣经，持续伤害附近敌人。",
+                weapon11, weapon11, WeaponBehavior.KingBible,
+                L(10f, 3f, 1f, 1f, 3f, 1, 1),
+                L(10f, 3f, 1f, 1f, 3f, 2, 1),
+                L(10f, 3f, 1.25f, 1.3f, 3f, 2, 1),
+                L(20f, 3f, 1.25f, 1.3f, 3.5f, 2, 1),
+                L(20f, 3f, 1.25f, 1.3f, 3.5f, 3, 1),
+                L(20f, 3f, 1.5f, 1.6f, 3.5f, 3, 1),
+                L(30f, 3f, 1.5f, 1.6f, 4f, 3, 1),
+                L(30f, 3f, 1.5f, 1.6f, 4f, 4, 1));
+
+            WeaponDefinition fireWand = W(
+                "fire_wand", "火焰魔杖", "随机选择敌人发射火球，火球造成高额伤害。",
+                weapon13, weapon13, WeaponBehavior.FireWand,
+                L(20f, 3f, 1f, 0.75f, 0f, 3, 1),
+                L(30f, 3f, 1f, 0.75f, 0f, 3, 1),
+                L(40f, 3f, 1f, 0.95f, 0f, 3, 1),
+                L(50f, 3f, 1f, 0.95f, 0f, 3, 1),
+                L(60f, 3f, 1f, 1.15f, 0f, 3, 1),
+                L(70f, 3f, 1f, 1.15f, 0f, 3, 1),
+                L(80f, 3f, 1f, 1.35f, 0f, 3, 1),
+                L(90f, 3f, 1f, 1.35f, 0f, 3, 1));
+
+            WeaponDefinition garlic = W(
+                "garlic", "大蒜", "以自身为中心的光环，持续对范围内敌人造成伤害。",
+                weapon15, weapon15, WeaponBehavior.Garlic,
+                L(5f, 1.3f, 1f, 1f, 0f, 1, 1),
+                L(7f, 1.3f, 1.4f, 1f, 0f, 1, 1),
+                L(8f, 1.2f, 1.4f, 1f, 0f, 1, 1),
+                L(9f, 1.2f, 1.6f, 1f, 0f, 1, 1),
+                L(11f, 1.1f, 1.6f, 1f, 0f, 1, 1),
+                L(12f, 1.1f, 1.8f, 1f, 0f, 1, 1),
+                L(13f, 1f, 1.8f, 1f, 0f, 1, 1),
+                L(15f, 1f, 2f, 1f, 0f, 1, 1));
+
+            WeaponDefinition santaWater = W(
+                "santa_water", "圣徒水", "在周围投掷圣水，形成持续伤害的水洼。",
+                weapon17, weapon17, WeaponBehavior.SantaWater,
+                L(10f, 4.5f, 1f, 1f, 2f, 1, 1),
+                L(10f, 4.5f, 1.2f, 1f, 2f, 2, 1),
+                L(20f, 4.5f, 1.2f, 1f, 2.5f, 2, 1),
+                L(20f, 4.5f, 1.4f, 1f, 2.5f, 3, 1),
+                L(30f, 4.5f, 1.4f, 1f, 2.75f, 3, 1),
+                L(30f, 4.5f, 1.6f, 1f, 2.75f, 4, 1),
+                L(35f, 4.5f, 1.6f, 1f, 3f, 4, 1),
+                L(40f, 4.5f, 1.8f, 1f, 3f, 4, 1));
+
+            WeaponDefinition runetracer = W(
+                "runetracer", "痕印石", "发射会在屏幕边缘反弹的符文，持续穿透敌人。",
+                weapon19, weapon19, WeaponBehavior.Runetracer,
+                L(10f, 3f, 1f, 1f, 2.25f, 1, 99),
+                L(15f, 3f, 1f, 1.2f, 2.25f, 1, 99),
+                L(20f, 3f, 1f, 1.2f, 2.5f, 1, 99),
+                L(20f, 3f, 1f, 1.2f, 2.5f, 2, 99),
+                L(25f, 3f, 1f, 1.4f, 2.5f, 2, 99),
+                L(30f, 3f, 1f, 1.4f, 2.75f, 2, 99),
+                L(30f, 3f, 1f, 1.4f, 2.75f, 3, 99),
+                L(30f, 3f, 1f, 1.4f, 3.25f, 3, 99));
+
+            WeaponDefinition lightning = W(
+                "lightning_ring", "闪电戒指", "在随机敌人位置落下闪电，造成范围伤害。",
+                weapon21, weapon21, WeaponBehavior.LightningRing,
+                L(15f, 4.5f, 1f, 1f, 0f, 2, 1),
+                L(15f, 4.5f, 1f, 1f, 0f, 3, 1),
+                L(25f, 4.5f, 2f, 1f, 0f, 3, 1),
+                L(25f, 4.5f, 2f, 1f, 0f, 4, 1),
+                L(45f, 4.5f, 3f, 1f, 0f, 4, 1),
+                L(45f, 4.5f, 3f, 1f, 0f, 5, 1),
+                L(65f, 4.5f, 4f, 1f, 0f, 5, 1),
+                L(65f, 4.5f, 4f, 1f, 0f, 6, 1));
+
+            PassiveDefinition spinach = P(
+                "spinach", "菠菜", "力量 +10%/级（共 +50%）。",
+                LoadIcon("passive_01"), PassiveEffect.Might, PassiveModifierKind.PercentAdd,
+                new[] { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f }, 5, true);
+
+            PassiveDefinition armor = P(
+                "armor", "护盔", "防御 +1/级；反伤暂未接入伤害流程。",
+                LoadIcon("passive_02"), PassiveEffect.Armor, PassiveModifierKind.FlatAdd,
+                new[] { 1f, 2f, 3f, 4f, 5f }, 5, false);
+
+            PassiveDefinition hollowHeart = P(
+                "hollow_heart", "空虚之心", "生命上限每级 ×1.2；当前无受伤流程。",
+                LoadIcon("passive_03"), PassiveEffect.MaxHealth, PassiveModifierKind.PercentMul,
+                new[] { 0.2f, 0.44f, 0.728f, 1.0736f, 1.48832f }, 5, false);
+
+            PassiveDefinition pummarola = P(
+                "pummarola", "愈伤番茄", "恢复 +0.2/级；当前无受伤/回血流程。",
+                LoadIcon("passive_04"), PassiveEffect.Recovery, PassiveModifierKind.FlatAdd,
+                new[] { 0.2f, 0.4f, 0.6f, 0.8f, 1f }, 5, false);
+
+            PassiveDefinition emptyTome = P(
+                "empty_tome", "空白之书", "冷却时间 −8%/级（共 −40%）。",
+                LoadIcon("passive_05"), PassiveEffect.Cooldown, PassiveModifierKind.PercentAdd,
+                new[] { -0.08f, -0.16f, -0.24f, -0.32f, -0.4f }, 5, true);
+
+            PassiveDefinition candelabrador = P(
+                "candelabrador", "烛台", "攻击范围 +10%/级（共 +50%）。",
+                LoadIcon("passive_06"), PassiveEffect.Area, PassiveModifierKind.PercentAdd,
+                new[] { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f }, 5, true);
+
+            PassiveDefinition bracer = P(
+                "bracer", "护腕", "飞射速度 +10%/级（共 +50%）。",
+                LoadIcon("passive_07"), PassiveEffect.ProjectileSpeed, PassiveModifierKind.PercentAdd,
+                new[] { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f }, 5, true);
+
+            PassiveDefinition spellbinder = P(
+                "spellbinder", "咒缚盒", "持续时间 +10%/级（共 +50%）。",
+                LoadIcon("passive_08"), PassiveEffect.Duration, PassiveModifierKind.PercentAdd,
+                new[] { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f }, 5, true);
+
+            PassiveDefinition duplicator = P(
+                "duplicator", "双鸾宝镯", "发射数量 +1/级（最多 +2）。",
+                LoadIcon("passive_09"), PassiveEffect.Amount, PassiveModifierKind.FlatAdd,
+                new[] { 1f, 2f }, 2, true);
+
+            PassiveDefinition attractorb = P(
+                "attractorb", "念力法球", "念力每级更大，拾取范围最多 ×3.98。",
+                LoadIcon("passive_11"), PassiveEffect.Magnet, PassiveModifierKind.PercentMul,
+                new[] { 0.5f, 0.995f, 1.49375f, 1.9925f, 2.98003f }, 5, true);
+
+            Sprite gemGreen = LoadSprite(ArtRoot + "pickup_xp_gem_green.png");
+            Sprite gemRed = LoadSprite(ArtRoot + "pickup_xp_gem_red.png");
+
+            ContentCatalog catalog = AssetDatabase.LoadAssetAtPath<ContentCatalog>(ContentCatalogPath);
+            if (catalog == null)
+            {
+                catalog = ScriptableObject.CreateInstance<ContentCatalog>();
+                catalog.name = "ContentCatalog";
+                AssetDatabase.CreateAsset(catalog, ContentCatalogPath);
+            }
+
+            catalog.SetContent(
+                new[]
+                {
+                    magicWand, knife, whip, axe, bible, fireWand, garlic, santaWater,
+                    runetracer, lightning
+                },
+                new[]
+                {
+                    spinach, armor, hollowHeart, pummarola, emptyTome, candelabrador,
+                    bracer, spellbinder, duplicator, attractorb
+                },
+                gemGreen,
+                gemRed);
+
+            EditorUtility.SetDirty(catalog);
+            AssetDatabase.SaveAssets();
+            return catalog;
+        }
+
+        private static Sprite LoadIcon(string name)
+        {
+            return LoadSprite(ArtRoot + "Icons/" + name + ".png");
+        }
+
+        private static WeaponDefinition W(
+            string id,
+            string name,
+            string description,
+            Sprite icon,
+            Sprite projectile,
+            WeaponBehavior behavior,
+            params WeaponLevelStats[] levels)
+        {
+            return new WeaponDefinition
+            {
+                Id = id,
+                DisplayName = name,
+                Description = description,
+                Icon = icon,
+                ProjectileSprite = projectile,
+                Behavior = behavior,
+                MaxLevel = levels.Length,
+                Weight = 100,
+                Levels = levels
+            };
+        }
+
+        private static WeaponLevelStats L(
+            float damage,
+            float cooldown,
+            float area = 1f,
+            float speed = 1f,
+            float duration = 0f,
+            int amount = 1,
+            int pierce = 1,
+            float critChance = 0f,
+            float critMultiplier = 1f)
+        {
+            return new WeaponLevelStats(
+                damage,
+                cooldown,
+                area,
+                speed,
+                duration,
+                amount,
+                pierce,
+                0f,
+                critChance,
+                critMultiplier);
+        }
+
+        private static PassiveDefinition P(
+            string id,
+            string name,
+            string description,
+            Sprite icon,
+            PassiveEffect effect,
+            PassiveModifierKind modifierKind,
+            float[] values,
+            int maxLevel,
+            bool offered)
+        {
+            return new PassiveDefinition
+            {
+                Id = id,
+                DisplayName = name,
+                Description = description,
+                Icon = icon,
+                MaxLevel = maxLevel,
+                Weight = 100,
+                Effect = effect,
+                ModifierKind = modifierKind,
+                LevelValues = values,
+                Offered = offered
+            };
         }
 
         private static Material EnsureUnlitMaterial()
@@ -308,21 +641,23 @@ namespace SurvivorArena.EditorTools
             Text weaponLabel = CreateLabel("WeaponLabel", inventory, new Vector2(2f, 0f), "武器 0/6", font);
             weaponLabel.color = new Color(0.78f, 0.74f, 0.6f, 0.95f);
 
+            var weaponSlots = new List<Image>();
             for (int i = 0; i < 6; i++)
             {
                 RectTransform slot = CreateUi($"WeaponSlot{i + 1}", inventory, TopLeft, TopLeft,
                     new Vector2(i * 62f, -24f), new Vector2(56f, 56f));
-                AddImage(slot, panelSprite, Color.white, true);
+                weaponSlots.Add(AddImage(slot, panelSprite, Color.white, true));
             }
 
             Text passiveLabel = CreateLabel("PassiveLabel", inventory, new Vector2(2f, -88f), "被动 0/6", font);
             passiveLabel.color = new Color(0.78f, 0.74f, 0.6f, 0.95f);
 
+            var passiveSlots = new List<Image>();
             for (int i = 0; i < 6; i++)
             {
                 RectTransform slot = CreateUi($"PassiveSlot{i + 1}", inventory, TopLeft, TopLeft,
                     new Vector2(i * 62f, -112f), new Vector2(56f, 56f));
-                AddImage(slot, panelSprite, Color.white, true);
+                passiveSlots.Add(AddImage(slot, panelSprite, Color.white, true));
             }
 
             RectTransform timer = CreateUi("Timer", canvasObject.transform, TopCenter, TopCenter,
@@ -340,10 +675,40 @@ namespace SurvivorArena.EditorTools
             Text killsText = AddText(kills, "击杀 0", 22, TextAnchor.MiddleRight,
                 new Color(0.95f, 0.9f, 0.78f, 1f), font, 1f);
 
+            // 底部经验条
+            RectTransform xpBackground = CreateUi("XpBar", canvasObject.transform,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(0f, 34f), new Vector2(760f, 18f));
+            AddImage(xpBackground, panelSprite, new Color(0.05f, 0.07f, 0.05f, 0.9f), true);
+
+            RectTransform xpFillRect = CreateUi("XpFill", xpBackground,
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
+                new Vector2(0f, 0f), new Vector2(752f, 12f));
+            Image xpFill = AddImage(xpFillRect, panelSprite, new Color(0.42f, 0.9f, 0.45f, 1f), false);
+
+            RectTransform levelRect = CreateUi("Level", canvasObject.transform,
+                new Vector2(0f, 0f), new Vector2(0f, 0f),
+                new Vector2(24f, 24f), new Vector2(260f, 32f));
+            Text levelText = AddText(levelRect, "等级 1", 22, TextAnchor.MiddleLeft,
+                new Color(0.85f, 0.92f, 0.72f, 1f), font, 1f, FontStyle.Bold);
+
+            RectTransform xpTextRect = CreateUi("XpText", canvasObject.transform,
+                new Vector2(1f, 0f), new Vector2(1f, 0f),
+                new Vector2(-24f, 24f), new Vector2(260f, 32f));
+            Text xpText = AddText(xpTextRect, "0/5", 20, TextAnchor.MiddleRight,
+                new Color(0.78f, 0.84f, 0.72f, 1f), font, 1f);
+
             RectTransform hint = CreateUi("Hint", canvasObject.transform, BottomLeft, BottomLeft,
-                new Vector2(24f, 18f), new Vector2(900f, 30f));
-            AddText(hint, "WASD / 方向键 移动　·　光环内敌人即死", 18, TextAnchor.MiddleLeft,
+                new Vector2(24f, 70f), new Vector2(1000f, 30f));
+            AddText(hint, "WASD / 方向键 移动　·　拾取经验宝石　·　升级三选一", 18, TextAnchor.MiddleLeft,
                 new Color(0.86f, 0.9f, 0.82f, 0.65f), font, 1f);
+
+            RectTransform toast = CreateUi("Toast", canvasObject.transform,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(0f, 88f), new Vector2(1200f, 40f));
+            Text toastText = AddText(toast, "", 24, TextAnchor.MiddleCenter,
+                new Color(1f, 0.85f, 0.4f, 1f), font, 2f, FontStyle.Bold);
+            toast.gameObject.SetActive(false);
 
             RectTransform overlay = CreateStretchUi("Victory", canvasObject.transform);
             AddImage(overlay, null, new Color(0f, 0f, 0f, 0.72f), false);
@@ -374,6 +739,14 @@ namespace SurvivorArena.EditorTools
             SetRef(hud, "timerText", timerText);
             SetRef(hud, "waveText", waveText);
             SetRef(hud, "killsText", killsText);
+            SetRef(hud, "xpFill", xpFill);
+            SetRef(hud, "levelText", levelText);
+            SetRef(hud, "xpText", xpText);
+            SetRef(hud, "weaponLabelText", weaponLabel);
+            SetRef(hud, "passiveLabelText", passiveLabel);
+            SetRef(hud, "toastText", toastText);
+            SetArray(hud, "weaponSlots", weaponSlots.Cast<Object>().ToArray());
+            SetArray(hud, "passiveSlots", passiveSlots.Cast<Object>().ToArray());
             SetRef(hud, "victoryGroup", victoryGroup);
             SetRef(hud, "victoryStatsText", statsText);
 
@@ -556,6 +929,30 @@ namespace SurvivorArena.EditorTools
                 for (int i = 0; i < values.Length; i++)
                 {
                     property.GetArrayElementAtIndex(i).objectReferenceValue = values[i];
+                }
+            });
+        }
+
+        private static void SetFloatArray(Object target, string field, params float[] values)
+        {
+            Mutate(target, field, property =>
+            {
+                property.arraySize = values.Length;
+                for (int i = 0; i < values.Length; i++)
+                {
+                    property.GetArrayElementAtIndex(i).floatValue = values[i];
+                }
+            });
+        }
+
+        private static void SetIntArray(Object target, string field, params int[] values)
+        {
+            Mutate(target, field, property =>
+            {
+                property.arraySize = values.Length;
+                for (int i = 0; i < values.Length; i++)
+                {
+                    property.GetArrayElementAtIndex(i).intValue = values[i];
                 }
             });
         }

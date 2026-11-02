@@ -15,9 +15,8 @@ MonoBehaviour:
   waveTableCsv: {fileID: 4900000, guid: 76f16bf4c6930ed43973577b652d3bec, type: 3}
   runDurationSeconds: 300
   playerMoveSpeed: 4.2
-  auraRadius: 2
-  enemySpawnRadiusMin: 12
-  enemySpawnRadiusMax: 14
+  enemySpawnRadiusMin: 8
+  enemySpawnRadiusMax: 10
   enemySpeedMin: 2.4
   enemySpeedMax: 2.9
   enemyRadius: 0.4
@@ -25,3 +24,29 @@ MonoBehaviour:
   enemyMaxSpawnsPerFrame: 8
   recycleDistance: 16
   recycleMargin: 1
+  contentCatalog: {fileID: 11400000, guid: c92bd98351aa2db4bac2a97d57c76c80, type: 2}
+  randomSeed: 20261031
+  xpGemMaxCount: 256
+  xpGemMagnetRadius: 2
+  xpGemPickupRadius: 0.6
+  xpGemMagnetSpeed: 12
+  maxWeaponSlots: 6
+  maxPassiveSlots: 6
+  baseProjectileSpeed: 8
+  projectileLifetime: 2.5
+  garlicBaseRadius: 2
+  enemyHealth: 5
+  enemyXp: 1
+  bossSpawnTimes:
+  - 60
+  - 150
+  - 270
+  bossChestRewards: 010000000300000005000000
+  bossSpawnRadius: 7
+  bossHealthBase: 120
+  bossHealthPerSpawn: 120
+  bossSpeed: 1.2
+  bossRadius: 0.8
+  bossVisualScale: 1.8
+  bossXp: 30
+  chestPickupRadius: 1.2

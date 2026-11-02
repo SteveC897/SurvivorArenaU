@@ -11,12 +11,8 @@ namespace SurvivorArena.Bootstrap
 {
     /// <summary>
     /// 组合根（Bootstrap 层）：唯一允许同时认识所有层的地方。
-    /// 负责：
-    ///   1. 读取 Data.BattleConfig / WaveTable；
-    ///   2. new 出 Core 服务与 Gameplay 系统；
-    ///   3. 把 Platform 输入、Presentation 相机视口注入 Gameplay；
-    ///   4. 每帧按固定顺序驱动它们。
-    /// Gameplay 不引用 Presentation，HUD 只通过 Core.EventBus 接收状态。
+    /// 创建属性表、背包、经验/升级、武器、拾取、宝箱、投射物与表现层，再按固定顺序驱动。
+    /// 升级时只暂停 Gameplay（GamePause），不修改 Time.timeScale，UI 动画与输入仍走真实时间。
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class BattleBootstrap : MonoBehaviour
@@ -28,7 +24,6 @@ namespace SurvivorArena.Bootstrap
         [SerializeField] private Camera mainCamera;
         [SerializeField] private PlayerMotor playerMotor;
         [SerializeField] private EnemySpawner spawner;
-        [SerializeField] private AuraView auraView;
 
         [Header("调试")]
         [SerializeField] private bool logWaveStarts = true;
@@ -36,22 +31,30 @@ namespace SurvivorArena.Bootstrap
         private GameClock _clock;
         private IPlayerInput _input;
         private PlayerStats _playerStats;
-        private KillAuraSystem _killAura;
+        private Loadout _loadout;
+        private ExperienceSystem _experience;
+        private UpgradeSystem _upgrades;
+        private PickupSystem _pickups;
+        private ProjectileSystem _projectiles;
+        private AreaEffectSystem _areas;
+        private OrbitEffectSystem _orbits;
+        private WeaponSystem _weapons;
+        private ChestSystem _chests;
         private OffscreenRecycler _recycler;
         private BattleSession _session;
+        private CombatPresenter _presenter;
 
-        /// <summary>
-        /// 后续新增的武器/被动/秘法牌系统由组合根拿到这个对象去注册修改器：
-        /// 只能拿 Stat 引用 AddModifier，不能直接改 Value。
-        /// </summary>
+        /// <summary>供后续系统/调试读取；正常系统由组合根注入。</summary>
         public PlayerStats Stats => _playerStats;
+
+        public Loadout CurrentLoadout => _loadout;
 
         private void Start()
         {
-            // 测试场景会在后台截图/长时间挂机，保证失焦时仍推进。
             Application.runInBackground = true;
+            GamePause.Reset();
 
-            if (config == null || mainCamera == null || playerMotor == null || spawner == null || auraView == null)
+            if (config == null || mainCamera == null || playerMotor == null || spawner == null)
             {
                 Debug.LogError($"{nameof(BattleBootstrap)} 的场景引用或配置不完整。", this);
                 enabled = false;
@@ -61,6 +64,22 @@ namespace SurvivorArena.Bootstrap
             if (config.WaveTableCsv == null)
             {
                 Debug.LogError($"{nameof(BattleBootstrap)} 的 BattleConfig 没有挂载波次表 CSV。", config);
+                enabled = false;
+                return;
+            }
+
+            ContentCatalog catalog = config.ContentCatalog;
+            if (catalog == null)
+            {
+                Debug.LogError($"{nameof(BattleBootstrap)} 的 BattleConfig 没有挂载 ContentCatalog。", config);
+                enabled = false;
+                return;
+            }
+
+            WeaponDefinition startingWeapon = catalog.FindWeapon("magic_wand");
+            if (startingWeapon == null)
+            {
+                Debug.LogError($"{nameof(BattleBootstrap)} 的内容目录缺少开局武器 magic_wand（强能魔杖）。", catalog);
                 enabled = false;
                 return;
             }
@@ -81,25 +100,75 @@ namespace SurvivorArena.Bootstrap
             // Core
             _clock = new GameClock();
 
-            // Platform：Gameplay 只拿到 Core.IPlayerInput，不知道底层用的是旧 Input。
+            // Platform
             _input = new LegacyPlayerInput(KeyCode.R);
 
-            // Gameplay
-            // 先建属性表：后续所有系统只从这里拿 Stat 引用，通过修改器改变数值。
+            // Gameplay：属性表 → 背包 → 经验/升级
             _playerStats = new PlayerStats(config);
+            _loadout = new Loadout(_playerStats, config.MaxWeaponSlots, config.MaxPassiveSlots);
+            _experience = new ExperienceSystem();
+            _upgrades = new UpgradeSystem(
+                _playerStats,
+                _loadout,
+                _experience,
+                catalog,
+                config.RandomSeed);
+
             playerMotor.Initialize(_input, _playerStats.MoveSpeed);
             spawner.Initialize(playerMotor.transform, config);
-            auraView.Initialize(_playerStats.AuraRadius);
 
             var viewport = new CameraViewport(mainCamera);
             _recycler = new OffscreenRecycler(spawner, playerMotor.transform, config, viewport);
-            _killAura = new KillAuraSystem(spawner, playerMotor.transform, _playerStats.AuraRadius);
+            _projectiles = new ProjectileSystem(spawner, viewport);
+            _areas = new AreaEffectSystem(spawner);
+            _orbits = new OrbitEffectSystem(spawner);
+            _pickups = new PickupSystem(playerMotor.transform, config, _playerStats);
+            _weapons = new WeaponSystem(
+                _playerStats,
+                _loadout,
+                spawner,
+                playerMotor.transform,
+                playerMotor,
+                _projectiles,
+                _areas,
+                _orbits,
+                config);
+            _chests = new ChestSystem(spawner, playerMotor.transform, config, _upgrades);
 
-            // 后续新增系统（武器/被动/秘法牌/强化）在这里 new，并把 _playerStats
-            // 或具体的 Stat 注入给它们；不要在其它地方直接改 Stat.Value。
             var scheduler = new WaveScheduler(waveTable);
             _session = new BattleSession(_clock, scheduler, spawner, playerMotor, config, logWaveStarts);
             _session.Start();
+
+            // 开局武器：强能魔杖。必须在 BattleStarted 之后加，HUD 会先清空槽位再收到装备事件。
+            _loadout.AddWeapon(startingWeapon);
+            _loadout.PublishChanged();
+            _experience.Publish();
+
+            SpriteRenderer playerRenderer = playerMotor.GetComponentInChildren<SpriteRenderer>(true);
+            Material spriteMaterial = playerRenderer != null ? playerRenderer.sharedMaterial : null;
+            if (spriteMaterial == null)
+            {
+                Shader shader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+                if (shader != null)
+                {
+                    spriteMaterial = new Material(shader);
+                }
+            }
+
+            _presenter = new CombatPresenter(
+                transform,
+                _projectiles,
+                _areas,
+                _orbits,
+                _pickups,
+                _chests,
+                catalog.XpGemGreen,
+                catalog.XpGemRed,
+                spriteMaterial);
+
+            Debug.Log(
+                $"[战斗开始] 伊梅尔达 · 初始武器「{startingWeapon.DisplayName}」；" +
+                $"内容 {catalog.Weapons?.Length ?? 0} 武器 / {catalog.Passives?.Length ?? 0} 被动。");
         }
 
         private void Update()
@@ -111,8 +180,12 @@ namespace SurvivorArena.Bootstrap
 
             _input.Poll();
 
+            bool paused = _upgrades != null && _upgrades.IsChoosing;
+            GamePause.SetPaused(paused);
+
             if (_session.IsVictory)
             {
+                GamePause.SetPaused(false);
                 if (_input.RestartPressed)
                 {
                     ReloadScene();
@@ -121,21 +194,57 @@ namespace SurvivorArena.Bootstrap
                 return;
             }
 
-            _clock.Tick(Time.deltaTime);
-            playerMotor.Tick(_clock.DeltaTime);
-            _session.Tick(_clock.DeltaTime);
-        }
-
-        private void LateUpdate()
-        {
-            if (_session == null || _session.IsVictory)
+            if (paused)
             {
                 return;
             }
 
-            // 此时 EnemyBat.Update 已经跑完：先判光环击杀，再处理跑得太远的蝙蝠。
-            _killAura.Tick();
-            _recycler.Tick();
+            _clock.Tick(Time.deltaTime);
+            float deltaTime = _clock.DeltaTime;
+
+            playerMotor.Tick(deltaTime);
+            _session.Tick(deltaTime);
+
+            if (_session.IsVictory)
+            {
+                GamePause.SetPaused(false);
+                return;
+            }
+
+            _weapons.Tick(deltaTime);
+            _projectiles.Tick(deltaTime);
+            _areas.Tick(deltaTime);
+            _orbits.Tick(deltaTime);
+            _pickups.Tick(deltaTime);
+            _chests.Tick(deltaTime);
+            _upgrades.Tick();
+
+            // 如果本帧刚弹出升级，立即冻结逻辑；UI 仍按真实时间运行。
+            GamePause.SetPaused(_upgrades.IsChoosing);
+        }
+
+        private void LateUpdate()
+        {
+            if (_session == null)
+            {
+                return;
+            }
+
+            if (!_session.IsVictory && !(_upgrades != null && _upgrades.IsChoosing))
+            {
+                _recycler.Tick();
+            }
+
+            _presenter?.Tick();
+        }
+
+        private void OnDestroy()
+        {
+            GamePause.Reset();
+            _experience?.Dispose();
+            _upgrades?.Dispose();
+            _pickups?.Dispose();
+            _chests?.Dispose();
         }
 
         private void ReloadScene()

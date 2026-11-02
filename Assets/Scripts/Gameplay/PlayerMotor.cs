@@ -17,12 +17,16 @@ namespace SurvivorArena.Gameplay
         private IPlayerInput _input;
         private Stat _moveSpeed;
         private bool _controlEnabled = true;
+        private Vector2 _facing = Vector2.right;
 
         public bool ControlEnabled => _controlEnabled;
 
         public bool IsMoving { get; private set; }
 
         public Vector2 MoveDirection { get; private set; }
+
+        /// <summary>最近一次移动方向；武器（飞刀/神鞭）按它决定发射方向。</summary>
+        public Vector2 Facing => _facing;
 
         /// <summary>由组合根在 Start 里注入输入与 MoveSpeed 属性。</summary>
         public void Initialize(IPlayerInput input, Stat moveSpeed)
@@ -80,6 +84,11 @@ namespace SurvivorArena.Gameplay
 
             if (IsMoving)
             {
+                if (move.sqrMagnitude > 0.0001f)
+                {
+                    _facing = move.normalized;
+                }
+
                 transform.position += (Vector3)(move * (speed * deltaTime));
             }
         }

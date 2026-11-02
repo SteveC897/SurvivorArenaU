@@ -6,13 +6,13 @@ namespace SurvivorArena.Gameplay
     /// <summary>
     /// 玩家属性表（Gameplay 层）。
     /// 负责把 Data.BattleConfig 里的基础值 + 本测试场景的默认值装进一个 StatBlock；
-    /// 后续武器/被动/秘法牌/强化只拿到这里的 Stat 引用去 AddModifier，
-    /// 不允许直接改 Stat.Value。
+    /// 武器/被动/强化只拿到这里的 Stat 引用去 AddModifier，不允许直接改 Stat.Value。
     ///
-    /// 当前场景真正读取的只有：
+    /// 当前真正读取的属性：
     ///   - MoveSpeed：PlayerMotor；
-    ///   - AuraRadius：KillAuraSystem + AuraView（测试用攻击半径）。
-    /// 其余属性已按 M2 的单位约定建好，留给后续系统接入。
+    ///   - Might / Cooldown / Area / ProjectileSpeed / Duration / Amount：WeaponSystem；
+    ///   - Magnet：PickupSystem；
+    ///   - Armor / MaxHealth / Recovery：防御被动保留，等玩家受伤流程接入。
     /// </summary>
     public sealed class PlayerStats
     {
@@ -47,8 +47,7 @@ namespace SurvivorArena.Gameplay
                 new Stat(StatType.Revival, 0f, 0f),
 
                 // 绝对值类：来自 BattleConfig
-                new Stat(StatType.MoveSpeed, config.PlayerMoveSpeed, 0f),
-                new Stat(StatType.AuraRadius, config.AuraRadius, 0.1f)
+                new Stat(StatType.MoveSpeed, config.PlayerMoveSpeed, 0f)
             });
         }
 
@@ -61,6 +60,34 @@ namespace SurvivorArena.Gameplay
 
         public Stat MoveSpeed => Get(StatType.MoveSpeed);
 
-        public Stat AuraRadius => Get(StatType.AuraRadius);
+        public Stat Might => Get(StatType.Might);
+
+        public Stat Armor => Get(StatType.Armor);
+
+        public Stat MaxHealth => Get(StatType.MaxHealth);
+
+        public Stat Recovery => Get(StatType.Recovery);
+
+        public Stat Cooldown => Get(StatType.Cooldown);
+
+        public Stat Area => Get(StatType.Area);
+
+        public Stat ProjectileSpeed => Get(StatType.ProjectileSpeed);
+
+        public Stat Duration => Get(StatType.Duration);
+
+        public Stat Amount => Get(StatType.Amount);
+
+        public Stat Magnet => Get(StatType.Magnet);
+
+        public Stat Luck => Get(StatType.Luck);
+
+        public Stat Growth => Get(StatType.Growth);
+
+        public Stat Greed => Get(StatType.Greed);
+
+        public Stat Curse => Get(StatType.Curse);
+
+        public Stat Revival => Get(StatType.Revival);
     }
 }

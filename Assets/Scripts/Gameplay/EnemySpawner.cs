@@ -34,6 +34,7 @@ namespace SurvivorArena.Gameplay
         private int _minimumCount;
         private float _spawnTimer;
         private bool _spawning;
+        private bool _clearing;
         private int _killCount;
 
         public IReadOnlyList<EnemyBat> ActiveEnemies => _active;
@@ -131,19 +132,59 @@ namespace SurvivorArena.Gameplay
 
             EnemyBat[] snapshot = _active.ToArray();
             int cleared = 0;
-            for (int i = 0; i < snapshot.Length; i++)
+            _clearing = true;
+            try
             {
-                EnemyBat enemy = snapshot[i];
-                if (enemy == null || !enemy.IsAlive)
+                for (int i = 0; i < snapshot.Length; i++)
                 {
-                    continue;
-                }
+                    EnemyBat enemy = snapshot[i];
+                    if (enemy == null || !enemy.IsAlive)
+                    {
+                        continue;
+                    }
 
-                enemy.Kill();
-                cleared++;
+                    enemy.Kill();
+                    cleared++;
+                }
+            }
+            finally
+            {
+                _clearing = false;
             }
 
             return cleared;
+        }
+
+        /// <summary>
+        /// 生成宝箱携带者（金色大蝙蝠）。宝箱由 ChestSystem 监听 IsBoss 死亡事件后掉落。
+        /// 不改变当前波次的补刷规则，Boss 会计入活跃数量。
+        /// </summary>
+        public EnemyBat SpawnBoss(Vector2 position, float health, int xpValue)
+        {
+            if (_pool == null || _config == null)
+            {
+                return null;
+            }
+
+            EnemyBat enemy = _pool.Get();
+            Sprite sprite = null;
+            if (batVariants != null && batVariants.Length > 0)
+            {
+                sprite = batVariants[Random.Range(0, batVariants.Length)];
+            }
+
+            enemy.Spawn(
+                position,
+                sprite,
+                _config.BossSpeed,
+                _player,
+                _config.BossRadius,
+                health,
+                xpValue,
+                true,
+                _config.BossVisualScale);
+            _active.Add(enemy);
+            return enemy;
         }
 
         private void SpawnOne()
@@ -166,7 +207,11 @@ namespace SurvivorArena.Gameplay
                 sprite,
                 Random.Range(_config.EnemySpeedMin, _config.EnemySpeedMax),
                 _player,
-                _config.EnemyRadius);
+                _config.EnemyRadius,
+                _config.EnemyHealth,
+                _config.EnemyXp,
+                false,
+                1f);
             _active.Add(enemy);
         }
 
@@ -187,7 +232,12 @@ namespace SurvivorArena.Gameplay
             }
 
             _killCount++;
-            EventBus<EnemyKilledEvent>.Publish(new EnemyKilledEvent(_killCount, enemy.Position));
+
+            // 胜利清场时不再掉经验/宝箱，避免结算后弹出升级或宝箱。
+            int xp = _clearing ? 0 : enemy.XpValue;
+            bool isBoss = !_clearing && enemy.IsBoss;
+            EventBus<EnemyKilledEvent>.Publish(
+                new EnemyKilledEvent(_killCount, enemy.Position, xp, isBoss));
         }
 
         private void HandleReleased(EnemyBat enemy)

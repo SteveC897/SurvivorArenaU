@@ -49,6 +49,7 @@ MonoBehaviour:
   bobAmplitude: 0.04
   bobSpeed: 9
   deathDuration: 0.18
+  hitFlashDuration: 0.08
 --- !u!1 &8198953145767264893
 GameObject:
   m_ObjectHideFlags: 0

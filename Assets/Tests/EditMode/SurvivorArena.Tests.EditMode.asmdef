@@ -3,6 +3,7 @@
     "rootNamespace": "SurvivorArena.Tests",
     "references": [
         "SurvivorArena.Core",
+        "SurvivorArena.Data",
         "SurvivorArena.Gameplay",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"

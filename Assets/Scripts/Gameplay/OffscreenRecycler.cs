@@ -36,7 +36,7 @@ namespace SurvivorArena.Gameplay
         /// <summary>累计回收次数（只用于调试/验证，不计入击杀）。</summary>
         public int RecycledCount { get; private set; }
 
-        /// <summary>由组合根在 LateUpdate 调用（在 KillAuraSystem 之后）。</summary>
+        /// <summary>由组合根在 LateUpdate 调用（在武器/拾取之后）。</summary>
         public void Tick()
         {
             if (_spawner == null || _player == null || _config == null)
@@ -57,7 +57,7 @@ namespace SurvivorArena.Gameplay
             for (int i = 0; i < enemies.Count; i++)
             {
                 EnemyBat enemy = enemies[i];
-                if (enemy == null || !enemy.IsAlive)
+                if (enemy == null || !enemy.IsAlive || enemy.IsBoss)
                 {
                     continue;
                 }
