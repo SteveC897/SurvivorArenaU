@@ -47,6 +47,8 @@ namespace SurvivorArena.Presentation
         private Text[] _weaponLevels;
         private Text[] _passiveLevels;
         private Coroutine _toastCoroutine;
+        private Texture2D _xpFillTexture;
+        private Sprite _xpFillSprite;
         private int _lastSeconds = -1;
         private int _lastWaveIndex = int.MinValue;
         private int _lastWaveTotal = -1;
@@ -61,6 +63,10 @@ namespace SurvivorArena.Presentation
 
             if (xpFill != null)
             {
+                // ui_panel 是带深色内芯/边框的九宫格图，直接染绿做 Filled 会露出黑色块。
+                // 经验条填充改用 1x1 纯白 Sprite，只靠 Image.color 染绿。
+                ConfigureXpFillSprite();
+                xpFill.overrideSprite = null;
                 xpFill.type = Image.Type.Filled;
                 xpFill.fillMethod = Image.FillMethod.Horizontal;
                 xpFill.fillOrigin = 0;
@@ -69,6 +75,39 @@ namespace SurvivorArena.Presentation
 
             SetLevel(1, 0, 5);
             SetLoadoutEmpty();
+        }
+
+        private void ConfigureXpFillSprite()
+        {
+            _xpFillTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false)
+            {
+                name = "XpFill_White_Runtime",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Point
+            };
+            _xpFillTexture.SetPixel(0, 0, Color.white);
+            _xpFillTexture.Apply(false, true);
+
+            _xpFillSprite = Sprite.Create(
+                _xpFillTexture,
+                new Rect(0f, 0f, 1f, 1f),
+                new Vector2(0.5f, 0.5f),
+                1f);
+            _xpFillSprite.name = "XpFill_White";
+            xpFill.sprite = _xpFillSprite;
+        }
+
+        private void OnDestroy()
+        {
+            if (_xpFillSprite != null)
+            {
+                Destroy(_xpFillSprite);
+            }
+
+            if (_xpFillTexture != null)
+            {
+                Destroy(_xpFillTexture);
+            }
         }
 
         private void OnEnable()
